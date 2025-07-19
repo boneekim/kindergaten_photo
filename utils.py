@@ -8,6 +8,7 @@ from PIL.ExifTags import TAGS
 import shutil
 import tempfile
 import streamlit as st
+import io
 
 def get_image_date(image_path):
     """
@@ -138,25 +139,33 @@ def create_slideshow_video(uploaded_files, output_dir):
     try:
         # 첫 번째 이미지로 비디오 크기 결정
         first_image = cv2.imread(image_files_with_dates[0][0])
+        if first_image is None:
+            return None, "첫 번째 이미지를 읽을 수 없습니다."
+            
         height, width, layers = first_image.shape
         
-        # 비디오 코덱 설정 (MOV 파일용)
+        # 비디오 코덱 설정 (MOV 파일용) - 더 호환성 높은 코덱 사용
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         fps = 0.5  # 2초당 1프레임 (한 장당 2초)
         
         # 비디오 라이터 생성
         video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
         
+        if not video_writer.isOpened():
+            return None, "비디오 라이터를 초기화할 수 없습니다."
+        
         # 각 이미지를 비디오에 추가
+        processed_count = 0
         for img_path, _, _ in image_files_with_dates:
             img = cv2.imread(img_path)
             if img is not None:
                 # 크기 조정 (필요한 경우)
                 img_resized = cv2.resize(img, (width, height))
                 video_writer.write(img_resized)
+                processed_count += 1
         
+        # 비디오 라이터 안전하게 닫기
         video_writer.release()
-        cv2.destroyAllWindows()
         
         # 임시 파일들 삭제
         for temp_file in temp_files:
@@ -165,7 +174,14 @@ def create_slideshow_video(uploaded_files, output_dir):
             except:
                 pass
         
-        return video_path, f"비디오가 성공적으로 생성되었습니다: {video_filename}"
+        if processed_count == 0:
+            return None, "처리된 이미지가 없습니다."
+        
+        # 생성된 파일 확인
+        if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
+            return video_path, f"비디오가 성공적으로 생성되었습니다: {video_filename} ({processed_count}개 이미지 처리)"
+        else:
+            return None, "비디오 파일이 제대로 생성되지 않았습니다."
     
     except Exception as e:
         # 임시 파일들 삭제
@@ -192,4 +208,21 @@ def create_zip_file(folder_path, zip_path):
             for file in files:
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, folder_path)
-                zipf.write(file_path, arcname) 
+                zipf.write(file_path, arcname)
+
+def create_zip_buffer(folder_path):
+    """
+    폴더를 메모리 버퍼에 ZIP으로 압축하는 함수 (클라우드 환경용)
+    """
+    zip_buffer = io.BytesIO()
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                # 상대 경로 생성 (유치원_사진_정리 폴더를 포함하도록)
+                arcname = os.path.relpath(file_path, os.path.dirname(folder_path))
+                zipf.write(file_path, arcname)
+    
+    zip_buffer.seek(0)
+    return zip_buffer 

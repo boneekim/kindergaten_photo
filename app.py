@@ -7,7 +7,8 @@ from utils import (
     organize_photos_by_week, 
     create_slideshow_video, 
     get_desktop_path,
-    create_zip_file
+    create_zip_file,
+    create_zip_buffer
 )
 
 def main():
@@ -82,98 +83,103 @@ def process_folder_organization(uploaded_files):
     
     with st.spinner("📁 날짜별 폴더로 정리 중..."):
         try:
-            # 데스크톱에 출력 폴더 생성
-            desktop_path = get_desktop_path()
-            output_base = os.path.join(desktop_path, "유치원_사진_정리")
-            
-            # 기존 폴더가 있으면 제거
-            if os.path.exists(output_base):
-                shutil.rmtree(output_base)
-            
-            os.makedirs(output_base, exist_ok=True)
-            
-            # 사진들을 주차별로 정리
-            result_folders = organize_photos_by_week(uploaded_files, output_base)
-            
-            if result_folders:
-                st.success("✅ 사진 정리가 완료되었습니다!")
+            # 임시 디렉토리에 폴더 생성 (클라우드 환경 호환)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                output_base = os.path.join(temp_dir, "유치원_사진_정리")
+                os.makedirs(output_base, exist_ok=True)
                 
-                # 결과 표시
-                st.markdown("#### 📂 생성된 폴더 구조")
+                # 사진들을 주차별로 정리
+                result_folders = organize_photos_by_week(uploaded_files, output_base)
                 
-                for folder_name, files in result_folders.items():
-                    with st.expander(f"📁 {folder_name} ({len(files)}개 파일)"):
-                        for file in files:
-                            st.write(f"• {file}")
-                
-                # 폴더 경로 표시
-                st.info(f"📍 저장 위치: `{output_base}`")
-                
-                # ZIP 파일 생성 및 다운로드 제공
-                zip_path = os.path.join(desktop_path, "유치원_사진_정리.zip")
-                create_zip_file(output_base, zip_path)
-                
-                with open(zip_path, "rb") as zip_file:
+                if result_folders:
+                    st.success("✅ 사진 정리가 완료되었습니다!")
+                    
+                    # 결과 표시
+                    st.markdown("#### 📂 생성된 폴더 구조")
+                    
+                    for folder_name, files in result_folders.items():
+                        with st.expander(f"📁 {folder_name} ({len(files)}개 파일)"):
+                            for file in files:
+                                st.write(f"• {file}")
+                    
+                    # 폴더 정보 표시
+                    st.info(f"📍 폴더가 생성되었습니다. 아래 ZIP 파일을 다운로드하여 확인하세요.")
+                    
+                    # ZIP 파일 생성
+                    zip_buffer = create_zip_buffer(output_base)
+                    
+                    # ZIP 파일 다운로드 제공
                     st.download_button(
                         label="📦 ZIP 파일로 다운로드",
-                        data=zip_file.read(),
+                        data=zip_buffer.getvalue(),
                         file_name="유치원_사진_정리.zip",
-                        mime="application/zip"
+                        mime="application/zip",
+                        help="다운로드한 ZIP 파일을 압축 해제하면 주차별로 정리된 폴더들을 볼 수 있습니다."
                     )
-                
-            else:
-                st.error("❌ 처리할 이미지 파일이 없습니다.")
+                    
+                    # 폴더 구조 미리보기
+                    st.markdown("#### 📋 폴더 구조 미리보기")
+                    st.code(f"""
+유치원_사진_정리/
+{chr(10).join([f"├── {folder}/ ({len(files)}개 파일)" for folder, files in result_folders.items()])}
+                    """)
+                    
+                else:
+                    st.error("❌ 처리할 이미지 파일이 없습니다.")
                 
         except Exception as e:
             st.error(f"❌ 처리 중 오류가 발생했습니다: {str(e)}")
+            st.error(f"상세 오류: {type(e).__name__}")
 
 def process_video_creation(uploaded_files):
     """슬라이드쇼 비디오 생성 처리"""
     
     with st.spinner("🎬 슬라이드쇼 비디오 생성 중... (시간이 좀 걸릴 수 있습니다)"):
         try:
-            # 데스크톱 경로
-            desktop_path = get_desktop_path()
-            
-            # 비디오 생성
-            video_path, message = create_slideshow_video(uploaded_files, desktop_path)
-            
-            if video_path and os.path.exists(video_path):
-                st.success("✅ 슬라이드쇼 비디오가 생성되었습니다!")
+            # 임시 디렉토리에서 비디오 생성 (클라우드 환경 호환)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # 비디오 생성
+                video_path, message = create_slideshow_video(uploaded_files, temp_dir)
                 
-                # 비디오 정보 표시
-                video_size = os.path.getsize(video_path)
-                video_name = os.path.basename(video_path)
-                
-                st.info(f"""
-                📹 **비디오 정보**
-                - 파일명: `{video_name}`
-                - 크기: {video_size / (1024*1024):.2f} MB
-                - 저장 위치: `{video_path}`
-                - 한 장당 2초씩 재생됩니다.
-                """)
-                
-                # 비디오 파일 다운로드 제공
-                with open(video_path, "rb") as video_file:
-                    st.download_button(
-                        label="🎬 비디오 파일 다운로드",
-                        data=video_file.read(),
-                        file_name=video_name,
-                        mime="video/quicktime"
-                    )
-                
-                # 미리보기 (브라우저에서 지원하는 경우)
-                try:
-                    st.markdown("#### 🎥 미리보기")
-                    st.video(video_path)
-                except Exception:
-                    st.info("💡 비디오 미리보기는 브라우저에서 지원하지 않을 수 있습니다. 다운로드하여 확인해주세요.")
+                if video_path and os.path.exists(video_path):
+                    st.success("✅ 슬라이드쇼 비디오가 생성되었습니다!")
                     
-            else:
-                st.error(f"❌ {message}")
+                    # 비디오 정보 표시
+                    video_size = os.path.getsize(video_path)
+                    video_name = os.path.basename(video_path)
+                    
+                    st.info(f"""
+                    📹 **비디오 정보**
+                    - 파일명: `{video_name}`
+                    - 크기: {video_size / (1024*1024):.2f} MB
+                    - 한 장당 2초씩 재생됩니다.
+                    - 아래 버튼으로 다운로드하세요.
+                    """)
+                    
+                    # 비디오 파일 다운로드 제공
+                    with open(video_path, "rb") as video_file:
+                        video_data = video_file.read()
+                        st.download_button(
+                            label="🎬 비디오 파일 다운로드",
+                            data=video_data,
+                            file_name=video_name,
+                            mime="video/quicktime",
+                            help="생성된 MOV 파일을 다운로드합니다."
+                        )
+                    
+                    # 미리보기 (브라우저에서 지원하는 경우)
+                    try:
+                        st.markdown("#### 🎥 미리보기")
+                        st.video(video_data)
+                    except Exception:
+                        st.info("💡 비디오 미리보기는 브라우저에서 지원하지 않을 수 있습니다. 다운로드하여 확인해주세요.")
+                        
+                else:
+                    st.error(f"❌ {message}")
                 
         except Exception as e:
             st.error(f"❌ 비디오 생성 중 오류가 발생했습니다: {str(e)}")
+            st.error(f"상세 오류: {type(e).__name__}")
 
 # 사이드바에 정보 추가
 def add_sidebar():
@@ -186,14 +192,17 @@ def add_sidebar():
     - 사진의 EXIF 데이터에서 촬영 날짜 추출
     - 주차별로 폴더 생성 (월요일 시작)
     - 폴더명: `YY(MM-DD ~ DD)` 형식
+    - ZIP 파일로 다운로드
     
     ### 🎬 슬라이드쇼 비디오
     - 날짜순으로 자동 정렬
     - 한 장당 2초 재생
     - MOV 형식으로 저장
+    - 직접 다운로드 가능
     
-    ### 💾 저장 위치
-    - 바탕화면에 결과 파일 저장
+    ### 💾 다운로드 방법
+    - 처리 완료 후 다운로드 버튼 클릭
+    - ZIP 파일 또는 MOV 파일로 저장
     """)
     
     st.sidebar.markdown("---")
